@@ -32,53 +32,27 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Install Streamlink + extra tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y streamlink ffmpeg
+      - name: Install Streamlink
+        run: sudo apt-get update && sudo apt-get install -y streamlink
 
-      - name: Loop – record, commit, repeat (no token)
+      - name: Loop – record, commit, repeat (no ad skipping)
         run: |
           cd "${{ steps.folder.outputs.name }}"
           seg_sec=${{ github.event.inputs.segment_seconds }}
           num=1
           while true; do
             echo "=== Recording segment $num (${seg_sec}s) ==="
-            
-            # Try multiple methods to bypass ads/token requirement
-            streamlink \
-              --twitch-disable-ads \
-              --twitch-low-latency \
-              --hls-live-restart \
-              "https://twitch.tv/${{ github.event.inputs.channel_name }}" \
-              480p,360p,best \
-              --hls-duration "$seg_sec" \
-              --output "./segment_$(printf '%03d' $num).ts" || \
+            # Removed --twitch-disable-ads and any other ad-bypass flags
             streamlink \
               "https://twitch.tv/${{ github.event.inputs.channel_name }}" \
               480p,360p,best \
               --hls-duration "$seg_sec" \
-              --output "./segment_$(printf '%03d' $num).ts" || \
-            yt-dlp \
-              -f best \
-              --live-from-start \
-              --wait-for-video 5 \
-              -o "./segment_$(printf '%03d' $num).%(ext)s" \
-              --external-downloader ffmpeg \
-              --downloader-args "ffmpeg: -t $seg_sec" \
-              "https://twitch.tv/${{ github.event.inputs.channel_name }}"
+              --output "./segment_$(printf '%03d' $num).mp4"
 
-            # If all methods fail, retry
             if [ $? -ne 0 ]; then
-              echo "All recording methods failed – retrying in 10 seconds..."
+              echo "Recording failed – retrying in 10 seconds..."
               sleep 10
               continue
-            fi
-
-            # Convert .ts to .mp4 if needed (ffmpeg)
-            if [ -f "./segment_$(printf '%03d' $num).ts" ]; then
-              ffmpeg -i "./segment_$(printf '%03d' $num).ts" -c copy "./segment_$(printf '%03d' $num).mp4" -y
-              rm "./segment_$(printf '%03d' $num).ts"
             fi
 
             git add "segment_$(printf '%03d' $num).mp4"
