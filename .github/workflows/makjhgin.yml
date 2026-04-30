@@ -1,4 +1,4 @@
-name: Record Segments – Commit Each (Small Gap OK)
+name: Recccord Segments – Commit Each (Small Gap OK)
 
 on:
   workflow_dispatch:
