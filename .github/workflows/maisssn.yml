@@ -24,7 +24,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 1. Install Cloudflare WARP client (official repo)
       - name: Install Cloudflare WARP
         run: |
           sudo apt update
@@ -34,26 +33,20 @@ jobs:
           sudo apt update
           sudo apt install -y cloudflare-warp
 
-      # 2. Register and connect using the correct syntax
-      - name: Connect to Cloudflare WARP
+      - name: Connect to Cloudflare WARP (corrected syntax)
         run: |
-          # Accept terms of service
-          echo "y" | warp-cli accept-tos || true
-          # Register (correct subcommand is 'registration')
-          warp-cli registration new
-          # Connect
+          # Register and accept ToS with --accept-tos flag
+          warp-cli --accept-tos registration new
           warp-cli connect
           sleep 5
           echo "WARP IP address:"
           curl -s ifconfig.me
 
-      # 3. Install yt-dlp and ffmpeg
-      - name: Install yt-dlp
+      - name: Install yt-dlp and ffmpeg
         run: |
           sudo apt install -y ffmpeg
           pip install --upgrade yt-dlp
 
-      # 4. Use cookies (you must add your YT_COOKIES secret)
       - name: Setup YouTube cookies
         uses: AnimMouse/setup-yt-dlp/cookies@v3
         with:
@@ -62,7 +55,6 @@ jobs:
       - name: Create downloads directory
         run: mkdir -p downloads
 
-      # 5. Download 144p video (tunneled through WARP)
       - name: Download video (144p)
         run: |
           yt-dlp -f "bestvideo[height<=144]+bestaudio/best" \
