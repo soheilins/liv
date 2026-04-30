@@ -1,4 +1,4 @@
-name: Download YouTube 144p (WARP + PO Token)
+name: Download YouTube Video (Split if >95MB)
 
 on:
   workflow_dispatch:
@@ -7,12 +7,24 @@ on:
         description: 'YouTube video URL'
         required: true
         type: string
-        default: 'https://www.youtube.com/watch?v=GvhlIFJaqS4'
+      quality:
+        description: 'Video quality'
+        required: true
+        type: choice
+        default: '720p'
+        options:
+          - 'best'
+          - '1080p'
+          - '720p'
+          - '480p'
+          - '360p'
+          - '240p'
+          - '144p'
       output_filename:
-        description: 'Output filename (without extension)'
+        description: 'Output filename (without extension, .mp4)'
         required: false
         type: string
-        default: 'video_144p'
+        default: 'video'
 
 jobs:
   download-and-commit:
@@ -24,8 +36,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # This step installs the tools needed to run yt-dlp.
-      - name: Install yt-dlp, FFmpeg, and Deno JS runtime
+      - name: Install yt-dlp, FFmpeg, and Deno
         run: |
           sudo apt update
           sudo apt install -y ffmpeg
@@ -33,33 +44,53 @@ jobs:
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> $GITHUB_PATH
 
-      # This step uses the dedicated GitHub Action to set up the WARP VPN.
       - name: Connect to Cloudflare WARP
         uses: viperadnan-git/setup-warp@v1
         with:
           mode: client
           stack: ipv4
 
-      - name: Verify WARP is active
-        run: curl -s ifconfig.me
-
       - name: Create downloads directory
         run: mkdir -p downloads
 
-      # This final download command now uses WARP, the Android client, and a PO token.
-      - name: Download video (144p) with PO Token and Android Client
+      - name: Download video with selected quality
         run: |
-          yt-dlp -f "bestvideo[height<=144]+bestaudio/best" \
+          QUALITY="${{ inputs.quality }}"
+          if [ "$QUALITY" = "best" ]; then
+            FORMAT="bestvideo+bestaudio/best"
+          else
+            HEIGHT=$(echo "$QUALITY" | sed 's/p//')
+            FORMAT="bestvideo[height<=${HEIGHT}]+bestaudio/best[height<=${HEIGHT}]"
+          fi
+
+          yt-dlp -f "$FORMAT" \
             -o "downloads/${{ inputs.output_filename }}.%(ext)s" \
             --merge-output-format mp4 \
             --extractor-arg "youtube:player_client=android" \
             --extractor-arg "youtube:po_token=android" \
             "${{ inputs.video_url }}"
 
+      - name: Check file size and split if >95MB
+        run: |
+          VIDEO_FILE="downloads/${{ inputs.output_filename }}.mp4"
+          MAX_SIZE=$((95 * 1024 * 1024))  # 95MB in bytes
+          FILE_SIZE=$(stat -c%s "$VIDEO_FILE")
+
+          if [ $FILE_SIZE -gt $MAX_SIZE ]; then
+            echo "📦 File size is $(du -h "$VIDEO_FILE" | cut -f1) – splitting into 95MB chunks"
+            # Split into 95MB chunks, using numeric suffixes (aa, ab, ac...)
+            split -b 95M "$VIDEO_FILE" "downloads/${{ inputs.output_filename }}_part_"
+            # Remove original large file
+            rm "$VIDEO_FILE"
+            echo "✅ Split into chunks: $(ls downloads/${{ inputs.output_filename }}_part_* | wc -l) parts"
+          else
+            echo "✅ File size is $(du -h "$VIDEO_FILE" | cut -f1) – under 95MB, no split needed"
+          fi
+
       - name: Commit and push
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Download YouTube 144p: ${{ inputs.video_url }}"
+          commit_message: "Download YouTube video (${{ inputs.quality }}) from ${{ inputs.video_url }}"
           commit_user_name: "github-actions[bot]"
           commit_user_email: "github-actions[bot]@users.noreply.github.com"
           file_pattern: "downloads/*"
