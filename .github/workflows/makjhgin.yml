@@ -1,4 +1,4 @@
-name: Recccord Segments – Commit Each (Small Gap OK)
+name: Record Segments – Commit Each (Small Gap OK)
 
 on:
   workflow_dispatch:
@@ -87,70 +87,6 @@ jobs:
 
             num=$((num + 1))
             if [ "${{ github.event.inputs.segments }}" -ne 0 ] && [ $num -gt "${{ github.event.inputs.segments }}" ]; then
-              break
-            fi
-          donename: tttRecord Segments – Commit Each (Small Gap OK)
-
-on:
-  workflow_dispatch:
-    inputs:
-      channel_name:
-        description: 'Twitch channel name'
-        required: true
-      segment_seconds:
-        description: 'Seconds per segment (e.g., 20)'
-        default: '20'
-      segments:
-        description: 'Number of segments (0 = unlimited until cancel)'
-        default: '0'
-
-jobs:
-  capture:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create folder
-        id: folder
-        run: |
-          TS=$(date +'%m%d%H%M%S')
-          echo "name=$TS" >> $GITHUB_OUTPUT
-          mkdir -p "$TS"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Install Chromium and modern Streamlink
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y chromium-browser
-          pip install --upgrade streamlink
-
-      - name: Loop – record, commit, repeat
-        run: |
-          cd "${{ steps.folder.outputs.name }}"
-          seg_sec=${{ github.event.inputs.segment_seconds }}
-          num=1
-          while true; do
-            echo "=== Recording segment $num (${seg_sec}s) ==="
-            streamlink --twitch-disable-ads \
-              --webbrowser-executable /usr/bin/chromium-browser \
-              --webbrowser-headless true \
-              --webbrowser-arguments "--no-sandbox --disable-dev-shm-usage" \
-              "https://twitch.tv/${{ github.event.inputs.channel_name }}" \
-              480p \
-              --hls-duration $seg_sec \
-              --output "segment_$(printf '%03d' $num).mp4"
-
-            git add "segment_$(printf '%03d' $num).mp4"
-            git commit -m "Segment $num from ${{ github.event.inputs.channel_name }}"
-            git push
-
-            num=$((num + 1))
-            if [ "${{ github.event.inputs.segments }}" -ne 0 ] && [ $num -gt ${{ github.event.inputs.segments }} ]; then
               break
             fi
           done
