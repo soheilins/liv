@@ -1,0 +1,131 @@
+name: Download YouTube Video (Choose Quality)
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'YouTube video URL'
+        required: true
+        type: string
+      quality:
+        description: 'Video quality'
+        required: true
+        default: 'best-under-100mb'
+        type: choice
+        options:
+          - best-under-100mb   # Best quality that fits under 100 MB (auto‑compress if needed)
+          - best               # Best available quality (no size limit)
+          - 2160p              # 4K
+          - 1440p              # 2K
+          - 1080p
+          - 720p
+          - 480p
+          - 360p
+          - 240p
+          - 144p
+          - lowest
+      output_filename:
+        description: 'Output filename (without extension, will be .mp4)'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  download-and-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup yt-dlp + FFmpeg
+        uses: AnimMouse/setup-yt-dlp@v3
+        with:
+          ffmpeg: true
+          aria2: true
+
+      - name: Create downloads directory
+        run: mkdir -p downloads
+
+      - name: Determine output filename
+        id: filename
+        run: |
+          if [ -n "${{ inputs.output_filename }}" ]; then
+            echo "filename=${{ inputs.output_filename }}.mp4" >> "$GITHUB_OUTPUT"
+          else
+            echo "filename=video.mp4" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ========== CASE: best-under-100mb ==========
+      - name: Download/compress for best-under-100mb
+        if: inputs.quality == 'best-under-100mb'
+        run: |
+          # Try direct format under 100 MB first
+          direct=$(yt-dlp -f "best[filesize<100M]" --print "%(format_id)s" "${{ inputs.video_url }}" 2>/dev/null || echo "")
+          if [ -n "$direct" ]; then
+            echo "Direct format $direct under 100MB found."
+            yt-dlp -f "$direct" -o "downloads/${{ steps.filename.outputs.filename }}" "${{ inputs.video_url }}"
+          else
+            echo "No direct format under 100MB. Downloading best quality and compressing..."
+            yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" \
+              -o "downloads/original_temp.mp4" --merge-output-format mp4 "${{ inputs.video_url }}"
+            
+            # Compress to 95 MB target
+            TARGET_MB=95
+            DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 downloads/original_temp.mp4)
+            TARGET_BITRATE=$(echo "($TARGET_MB * 8192) / $DURATION" | bc)
+            [ $TARGET_BITRATE -lt 500 ] && TARGET_BITRATE=500
+            
+            ffmpeg -i downloads/original_temp.mp4 -c:v libx264 -b:v ${TARGET_BITRATE}k -pass 1 -f mp4 /dev/null -y
+            ffmpeg -i downloads/original_temp.mp4 -c:v libx264 -b:v ${TARGET_BITRATE}k -pass 2 -c:a aac -b:a 128k \
+              -movflags +faststart "downloads/${{ steps.filename.outputs.filename }}" -y
+            rm -f downloads/original_temp.mp4 ffmpeg2pass-0.log ffmpeg2pass-0.log.mbtree
+          fi
+
+      # ========== CASE: best (no limit) ==========
+      - name: Download best quality (no size limit)
+        if: inputs.quality == 'best'
+        run: |
+          yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" \
+            -o "downloads/${{ steps.filename.outputs.filename }}" \
+            --merge-output-format mp4 "${{ inputs.video_url }}"
+
+      # ========== CASE: specific resolution (e.g., 1080p) ==========
+      - name: Download specific resolution
+        if: inputs.quality != 'best-under-100mb' && inputs.quality != 'best' && inputs.quality != 'lowest'
+        run: |
+          # Map user input to height filter (e.g., 1080p -> height=1080)
+          HEIGHT=$(echo "${{ inputs.quality }}" | sed 's/p//')
+          yt-dlp -f "bestvideo[height<=${HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${HEIGHT}][ext=mp4]/best" \
+            -o "downloads/${{ steps.filename.outputs.filename }}" \
+            --merge-output-format mp4 "${{ inputs.video_url }}"
+
+      # ========== CASE: lowest quality ==========
+      - name: Download lowest quality
+        if: inputs.quality == 'lowest'
+        run: |
+          yt-dlp -f "worstvideo[ext=mp4]+worstaudio[ext=m4a]/worst[ext=mp4]/worst" \
+            -o "downloads/${{ steps.filename.outputs.filename }}" \
+            --merge-output-format mp4 "${{ inputs.video_url }}"
+
+      - name: Verify final file (for best-under-100mb only)
+        if: inputs.quality == 'best-under-100mb'
+        run: |
+          SIZE=$(stat -c%s "downloads/${{ steps.filename.outputs.filename }}")
+          if [ $SIZE -gt $((100 * 1024 * 1024)) ]; then
+            echo "⚠️ Warning: Final file exceeds 100MB! Size: $SIZE bytes"
+          else
+            echo "✅ File is under 100MB."
+          fi
+
+      - name: Commit and push
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Add YouTube video (${{ inputs.video_url }}) - quality: ${{ inputs.quality }}"
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "github-actions[bot]@users.noreply.github.com"
+          file_pattern: "downloads/*"
