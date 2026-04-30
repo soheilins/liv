@@ -1,4 +1,4 @@
-name: Record kjhgfSegments – Commit Each (Small Gap OK)
+name: tttRecord Segments – Commit Each (Small Gap OK)
 
 on:
   workflow_dispatch:
@@ -32,8 +32,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Install Streamlink and Chromium
-        run: sudo apt-get update && sudo apt-get install -y streamlink chromium-browser
+      - name: Install Chromium and modern Streamlink
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+          pip install --upgrade streamlink
 
       - name: Loop – record, commit, repeat
         run: |
