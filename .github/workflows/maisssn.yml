@@ -1,4 +1,4 @@
-name: Download YouTube 144p (via Cloudflare WARP – wgcf method)
+name: Download YouTube 144p (Proxy)
 
 on:
   workflow_dispatch:
@@ -24,47 +24,66 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Install WireGuard tools and download wgcf
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y wireguard-tools curl
-          curl -Lo wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.17/wgcf_2.2.17_linux_amd64
-          chmod +x wgcf
-
-      # Register with Cloudflare WARP and generate WireGuard config
-      - name: Setup Cloudflare WARP (wgcf)
-        run: |
-          # Automatic registration (accepts ToS)
-          echo "yes" | ./wgcf register
-          ./wgcf generate
-          # Use Cloudflare DNS
-          sed -i 's/^DNS = .*/DNS = 1.1.1.1/' wgcf-profile.conf
-          # Bring up the tunnel
-          sudo wg-quick up wgcf-profile.conf
-          sleep 5
-          echo "Public IP after WARP:"
-          curl -s ifconfig.me
-
-      - name: Install yt-dlp and ffmpeg
-        run: |
-          sudo apt install -y ffmpeg
+          sudo apt install -y ffmpeg curl jq
           pip install --upgrade yt-dlp
 
-      - name: Setup YouTube cookies
-        uses: AnimMouse/setup-yt-dlp/cookies@v3
-        with:
-          cookies: ${{ secrets.YT_COOKIES }}
+      - name: Find working free proxy
+        id: find_proxy
+        run: |
+          echo "🔍 Fetching list of working proxies..."
+          PROXY=""
+          PROXY_SOURCES=(
+            "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=all&anonymity=anonymous"
+            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
+            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt"
+            "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt"
+          )
+          
+          for SOURCE in "${PROXY_SOURCES[@]}"; do
+            echo "📡 Trying proxy source: $SOURCE"
+            PROXIES=$(curl -s "$SOURCE" | grep -Eo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]+' | head -5)
+            
+            for IP in $PROXIES; do
+              echo "Testing proxy: $IP"
+              if curl -s -x "http://$IP" --max-time 5 https://api.ipify.org > /dev/null 2>&1; then
+                PROXY="$IP"
+                echo "✅ Found working proxy: $PROXY"
+                break 2
+              fi
+            done
+          done
+          
+          if [ -z "$PROXY" ]; then
+            echo "⚠️ No working proxy found, falling back to none"
+            PROXY=""
+          fi
+          
+          echo "proxy=$PROXY" >> $GITHUB_OUTPUT
 
       - name: Create downloads directory
         run: mkdir -p downloads
 
-      - name: Download video (144p)
+      - name: Download video (144p) with proxy
         run: |
-          yt-dlp -f "bestvideo[height<=144]+bestaudio/best" \
-            -o "downloads/${{ inputs.output_filename }}.%(ext)s" \
-            --merge-output-format mp4 \
-            "${{ inputs.video_url }}"
+          PROXY="${{ steps.find_proxy.outputs.proxy }}"
+          if [ -n "$PROXY" ]; then
+            echo "🌐 Downloading via proxy: $PROXY"
+            yt-dlp --proxy "http://$PROXY" \
+              -f "bestvideo[height<=144]+bestaudio/best" \
+              -o "downloads/${{ inputs.output_filename }}.%(ext)s" \
+              --merge-output-format mp4 \
+              "${{ inputs.video_url }}"
+          else
+            echo "🌐 Downloading without proxy (bypass may fail)"
+            yt-dlp \
+              -f "bestvideo[height<=144]+bestaudio/best" \
+              -o "downloads/${{ inputs.output_filename }}.%(ext)s" \
+              --merge-output-format mp4 \
+              "${{ inputs.video_url }}"
+          fi
 
       - name: Commit and push
         uses: stefanzweifel/git-auto-commit-action@v5
