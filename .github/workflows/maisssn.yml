@@ -23,35 +23,37 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true
 
-      # Install the Cloudflare WARP client and required tools.
-      # This is a more reliable method than downloading a raw .conf file.
-      - name: Install Cloudflare WARP (wireguard-go)
+      # 1. Install Cloudflare WARP client (official repo)
+      - name: Install Cloudflare WARP
         run: |
           sudo apt update
-          sudo apt install -y wireguard-tools curl
+          sudo apt install -y curl gpg
           curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
           sudo apt update
           sudo apt install -y cloudflare-warp
 
-      # Register and connect to Cloudflare WARP.
-      # This gives you a clean, residential-like IP address.
+      # 2. Register and connect using the correct syntax
       - name: Connect to Cloudflare WARP
         run: |
-          echo "y" | warp-cli register
+          # Accept terms of service
+          echo "y" | warp-cli accept-tos || true
+          # Register (correct subcommand is 'registration')
+          warp-cli registration new
+          # Connect
           warp-cli connect
           sleep 5
-          echo "WARP IP Address:"
+          echo "WARP IP address:"
           curl -s ifconfig.me
 
-      - name: Setup yt-dlp and dependencies
+      # 3. Install yt-dlp and ffmpeg
+      - name: Install yt-dlp
         run: |
           sudo apt install -y ffmpeg
           pip install --upgrade yt-dlp
 
+      # 4. Use cookies (you must add your YT_COOKIES secret)
       - name: Setup YouTube cookies
         uses: AnimMouse/setup-yt-dlp/cookies@v3
         with:
@@ -60,6 +62,7 @@ jobs:
       - name: Create downloads directory
         run: mkdir -p downloads
 
+      # 5. Download 144p video (tunneled through WARP)
       - name: Download video (144p)
         run: |
           yt-dlp -f "bestvideo[height<=144]+bestaudio/best" \
