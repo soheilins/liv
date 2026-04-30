@@ -1,4 +1,4 @@
-name: Download YouTube 144p (via Cloudflare WARP)
+name: Download YouTube 144p (via Cloudflare WARP – wgcf method)
 
 on:
   workflow_dispatch:
@@ -24,22 +24,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Cloudflare WARP
+      # Install WireGuard tools and download wgcf
+      - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y curl gpg
-          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
-          sudo apt update
-          sudo apt install -y cloudflare-warp
+          sudo apt install -y wireguard-tools curl
+          curl -Lo wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.17/wgcf_2.2.17_linux_amd64
+          chmod +x wgcf
 
-      - name: Connect to Cloudflare WARP (corrected syntax)
+      # Register with Cloudflare WARP and generate WireGuard config
+      - name: Setup Cloudflare WARP (wgcf)
         run: |
-          # Register and accept ToS with --accept-tos flag
-          warp-cli --accept-tos registration new
-          warp-cli connect
+          # Automatic registration (accepts ToS)
+          echo "yes" | ./wgcf register
+          ./wgcf generate
+          # Use Cloudflare DNS
+          sed -i 's/^DNS = .*/DNS = 1.1.1.1/' wgcf-profile.conf
+          # Bring up the tunnel
+          sudo wg-quick up wgcf-profile.conf
           sleep 5
-          echo "WARP IP address:"
+          echo "Public IP after WARP:"
           curl -s ifconfig.me
 
       - name: Install yt-dlp and ffmpeg
