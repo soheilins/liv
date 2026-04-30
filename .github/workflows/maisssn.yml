@@ -26,31 +26,43 @@ jobs:
         with:
           persist-credentials: true
 
-      - name: Install yt-dlp + FFmpeg + wireguard-tools
+      # Install the Cloudflare WARP client and required tools.
+      # This is a more reliable method than downloading a raw .conf file.
+      - name: Install Cloudflare WARP (wireguard-go)
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg wireguard-tools curl
-          pip install yt-dlp
+          sudo apt install -y wireguard-tools curl
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt update
+          sudo apt install -y cloudflare-warp
 
-      # ---------- Cloudflare WARP (free VPN) ----------
-      - name: Setup Cloudflare WARP WireGuard tunnel
+      # Register and connect to Cloudflare WARP.
+      # This gives you a clean, residential-like IP address.
+      - name: Connect to Cloudflare WARP
         run: |
-          # Download the official Cloudflare WARP config for Linux
-          curl -L -o /tmp/warp.conf https://repos.cloudflare.software/warp/warp.conf
-          # Modify the config to use a free endpoint (optional, but works out of the box)
-          sudo wg-quick up /tmp/warp.conf
-          # Wait for the interface to come up
+          echo "y" | warp-cli register
+          warp-cli connect
           sleep 5
-          echo "WARP IP address:"
+          echo "WARP IP Address:"
           curl -s ifconfig.me
+
+      - name: Setup yt-dlp and dependencies
+        run: |
+          sudo apt install -y ffmpeg
+          pip install --upgrade yt-dlp
+
+      - name: Setup YouTube cookies
+        uses: AnimMouse/setup-yt-dlp/cookies@v3
+        with:
+          cookies: ${{ secrets.YT_COOKIES }}
 
       - name: Create downloads directory
         run: mkdir -p downloads
 
-      - name: Download video (144p) via WARP connection
+      - name: Download video (144p)
         run: |
-          # Format: best video stream with height <= 144 + best audio, merged into MP4
-          yt-dlp -f "bestvideo[height<=144]+bestaudio/best[height<=144]" \
+          yt-dlp -f "bestvideo[height<=144]+bestaudio/best" \
             -o "downloads/${{ inputs.output_filename }}.%(ext)s" \
             --merge-output-format mp4 \
             "${{ inputs.video_url }}"
