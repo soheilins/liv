@@ -15,7 +15,7 @@ on:
 
 jobs:
   capture:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
 
@@ -35,32 +35,25 @@ jobs:
       - name: Install Streamlink
         run: sudo apt-get update && sudo apt-get install -y streamlink
 
-      - name: Loop – record, commit, repeat (no ad skipping)
+      - name: Loop – record, commit, repeat
         run: |
           cd "${{ steps.folder.outputs.name }}"
           seg_sec=${{ github.event.inputs.segment_seconds }}
           num=1
           while true; do
             echo "=== Recording segment $num (${seg_sec}s) ==="
-            # Removed --twitch-disable-ads and any other ad-bypass flags
             streamlink \
               "https://twitch.tv/${{ github.event.inputs.channel_name }}" \
-              480p,360p,best \
-              --hls-duration "$seg_sec" \
-              --output "./segment_$(printf '%03d' $num).mp4"
-
-            if [ $? -ne 0 ]; then
-              echo "Recording failed – retrying in 10 seconds..."
-              sleep 10
-              continue
-            fi
+              480p \
+              --hls-duration $seg_sec \
+              --output "segment_$(printf '%03d' $num).mp4"
 
             git add "segment_$(printf '%03d' $num).mp4"
             git commit -m "Segment $num from ${{ github.event.inputs.channel_name }}"
             git push
 
             num=$((num + 1))
-            if [ "${{ github.event.inputs.segments }}" -ne 0 ] && [ $num -gt "${{ github.event.inputs.segments }}" ]; then
+            if [ "${{ github.event.inputs.segments }}" -ne 0 ] && [ $num -gt ${{ github.event.inputs.segments }} ]; then
               break
             fi
           done
