@@ -1,4 +1,95 @@
-name: tttRecord Segments – Commit Each (Small Gap OK)
+name: Record Segments – Commit Each (Small Gap OK)
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel_name:
+        description: 'Twitch channel name'
+        required: true
+      segment_seconds:
+        description: 'Seconds per segment (e.g., 20)'
+        default: '20'
+      segments:
+        description: 'Number of segments (0 = unlimited until cancel)'
+        default: '0'
+
+jobs:
+  capture:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create folder
+        id: folder
+        run: |
+          TS=$(date +'%m%d%H%M%S')
+          echo "name=$TS" >> $GITHUB_OUTPUT
+          mkdir -p "$TS"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install Streamlink + extra tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y streamlink ffmpeg
+
+      - name: Loop – record, commit, repeat (no token)
+        run: |
+          cd "${{ steps.folder.outputs.name }}"
+          seg_sec=${{ github.event.inputs.segment_seconds }}
+          num=1
+          while true; do
+            echo "=== Recording segment $num (${seg_sec}s) ==="
+            
+            # Try multiple methods to bypass ads/token requirement
+            streamlink \
+              --twitch-disable-ads \
+              --twitch-low-latency \
+              --hls-live-restart \
+              "https://twitch.tv/${{ github.event.inputs.channel_name }}" \
+              480p,360p,best \
+              --hls-duration "$seg_sec" \
+              --output "./segment_$(printf '%03d' $num).ts" || \
+            streamlink \
+              "https://twitch.tv/${{ github.event.inputs.channel_name }}" \
+              480p,360p,best \
+              --hls-duration "$seg_sec" \
+              --output "./segment_$(printf '%03d' $num).ts" || \
+            yt-dlp \
+              -f best \
+              --live-from-start \
+              --wait-for-video 5 \
+              -o "./segment_$(printf '%03d' $num).%(ext)s" \
+              --external-downloader ffmpeg \
+              --downloader-args "ffmpeg: -t $seg_sec" \
+              "https://twitch.tv/${{ github.event.inputs.channel_name }}"
+
+            # If all methods fail, retry
+            if [ $? -ne 0 ]; then
+              echo "All recording methods failed – retrying in 10 seconds..."
+              sleep 10
+              continue
+            fi
+
+            # Convert .ts to .mp4 if needed (ffmpeg)
+            if [ -f "./segment_$(printf '%03d' $num).ts" ]; then
+              ffmpeg -i "./segment_$(printf '%03d' $num).ts" -c copy "./segment_$(printf '%03d' $num).mp4" -y
+              rm "./segment_$(printf '%03d' $num).ts"
+            fi
+
+            git add "segment_$(printf '%03d' $num).mp4"
+            git commit -m "Segment $num from ${{ github.event.inputs.channel_name }}"
+            git push
+
+            num=$((num + 1))
+            if [ "${{ github.event.inputs.segments }}" -ne 0 ] && [ $num -gt "${{ github.event.inputs.segments }}" ]; then
+              break
+            fi
+          donename: tttRecord Segments – Commit Each (Small Gap OK)
 
 on:
   workflow_dispatch:
