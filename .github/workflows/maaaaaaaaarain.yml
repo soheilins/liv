@@ -1,0 +1,162 @@
+name: Continuous YouTube Downloader (Auto-Remove Links)
+
+on:
+  workflow_dispatch:
+    inputs:
+      quality:
+        description: 'Video quality for all downloads'
+        required: true
+        type: choice
+        default: '720p'
+        options:
+          - 'best'
+          - '1080p'
+          - '720p'
+          - '480p'
+          - '360p'
+          - '240p'
+          - '144p'
+      poll_interval:
+        description: 'Seconds to wait between checks for new links'
+        required: false
+        type: number
+        default: 5
+
+jobs:
+  continuous-download:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install yt-dlp, FFmpeg, and Deno
+        run: |
+          sudo apt update
+          sudo apt install -y ffmpeg
+          pip install --upgrade yt-dlp
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+
+      - name: Connect to Cloudflare WARP (once)
+        uses: viperadnan-git/setup-warp@v1
+        with:
+          mode: client
+          stack: ipv4
+
+      - name: Create necessary files & directories
+        run: |
+          mkdir -p downloads
+          touch links.txt downloaded.txt
+
+      - name: Continuous download loop with auto-removal
+        env:
+          QUALITY: ${{ inputs.quality }}
+          POLL_INTERVAL: ${{ inputs.poll_interval }}
+        run: |
+          # Helper function to convert quality to yt-dlp format
+          get_format() {
+            local q="$1"
+            if [ "$q" = "best" ]; then
+              echo "bestvideo+bestaudio/best"
+            else
+              local height=$(echo "$q" | sed 's/p//')
+              echo "bestvideo[height<=${height}]+bestaudio/best[height<=${height}]"
+            fi
+          }
+          FORMAT=$(get_format "$QUALITY")
+
+          # Track already processed URLs (to avoid re-downloading if re-added later)
+          declare -A processed_urls
+          if [ -f downloaded.txt ]; then
+            while IFS= read -r url; do
+              processed_urls["$url"]=1
+            done < downloaded.txt
+          fi
+
+          echo "🔄 Starting continuous polling (interval ${POLL_INTERVAL}s). Cancel manually when done."
+
+          while true; do
+            # 1. Pull latest changes (in case links.txt was updated via commit)
+            git pull --no-edit || true
+
+            # 2. Read current links from links.txt (comma separated, one line allowed)
+            if [ ! -s links.txt ]; then
+              echo "⏳ No links in links.txt, waiting..."
+              sleep "$POLL_INTERVAL"
+              continue
+            fi
+
+            RAW_LINKS=$(cat links.txt | tr -d '\n')
+            IFS=',' read -ra URL_ARRAY <<< "$RAW_LINKS"
+
+            NEW_URLS=()
+            for url in "${URL_ARRAY[@]}"; do
+              url=$(echo "$url" | xargs)  # trim whitespace
+              if [ -n "$url" ] && [ -z "${processed_urls[$url]}" ]; then
+                NEW_URLS+=("$url")
+              fi
+            done
+
+            # 3. If no new URLs, just wait
+            if [ ${#NEW_URLS[@]} -eq 0 ]; then
+              echo "⏳ No new URLs, waiting ${POLL_INTERVAL}s..."
+              sleep "$POLL_INTERVAL"
+              continue
+            fi
+
+            # 4. Process each new URL
+            for url in "${NEW_URLS[@]}"; do
+              echo "🎬 Downloading: $url"
+              # Download using yt-dlp, naming by video title
+              yt-dlp -f "$FORMAT" \
+                -o "downloads/%(title)s.%(ext)s" \
+                --merge-output-format mp4 \
+                --extractor-arg "youtube:player_client=android" \
+                --extractor-arg "youtube:po_token=android" \
+                "$url"
+
+              if [ $? -eq 0 ]; then
+                # Split any newly downloaded file if >95MB
+                find downloads -name "*.mp4" -type f -mmin -0.1 -print0 | while IFS= read -r -d '' file; do
+                  MAX_SIZE=$((95 * 1024 * 1024))
+                  FILE_SIZE=$(stat -c%s "$file")
+                  if [ $FILE_SIZE -gt $MAX_SIZE ]; then
+                    echo "📦 Splitting $file (size >95MB)"
+                    dir=$(dirname "$file")
+                    base=$(basename "$file" .mp4)
+                    split -b 95M "$file" "${dir}/${base}_part_"
+                    rm "$file"
+                  fi
+                done
+
+                # Mark as processed in memory and on disk
+                echo "$url" >> downloaded.txt
+                processed_urls["$url"]=1
+
+                # Remove the downloaded URL from links.txt (handles commas)
+                # Escape special regex characters in the URL
+                esc_url=$(echo "$url" | sed 's/[][\.*^$()+?{|]/\\&/g')
+                # Remove the URL and fix extra commas
+                sed -i "s|$esc_url||g; s|,,|,|g; s|^,||; s|,$||; s|, ,|,|g" links.txt
+                # Remove empty lines
+                sed -i '/^$/d' links.txt
+
+                echo "✅ Downloaded and removed from links.txt: $url"
+              else
+                echo "❌ Failed to download $url – will retry next cycle (link kept)"
+              fi
+            done
+
+            # 5. Commit and push changes (downloaded files, updated links.txt, downloaded.txt)
+            git add downloads/ links.txt downloaded.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "Download videos: ${#NEW_URLS[@]} new; removed from queue" || echo "No changes to commit"
+            git push || echo "Push failed, will retry later"
+
+            # 6. Wait before next poll
+            sleep "$POLL_INTERVAL"
+          done
