@@ -1,4 +1,4 @@
-name: Record hhhh Segments – Commit Each (Small Gap OK)
+name: Record kjhgfSegments – Commit Each (Small Gap OK)
 
 on:
   workflow_dispatch:
@@ -44,7 +44,7 @@ jobs:
             echo "=== Recording segment $num (${seg_sec}s) ==="
             streamlink --twitch-disable-ads \
               --webbrowser-executable /usr/bin/chromium-browser \
-              --webbrowser-headless \
+              --webbrowser-headless true \
               --webbrowser-arguments "--no-sandbox --disable-dev-shm-usage" \
               "https://twitch.tv/${{ github.event.inputs.channel_name }}" \
               480p \
