@@ -8,7 +8,7 @@ on:
         required: true
       segment_seconds:
         description: 'Seconds per segment (e.g., 20)'
-        default: '20'
+        default: '420'
       segments:
         description: 'Number of segments (0 = unlimited until cancel)'
         default: '0'
