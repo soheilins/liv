@@ -44,7 +44,7 @@ jobs:
             echo "=== Recording segment $num (${seg_sec}s) ==="
             streamlink \
               "https://twitch.tv/${{ github.event.inputs.channel_name }}" \
-              480p30 \
+              480p \
               --hls-duration $seg_sec \
               --output "segment_$(printf '%03d' $num).mp4"
 
