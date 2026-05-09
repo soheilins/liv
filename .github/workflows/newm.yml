@@ -32,14 +32,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Install Streamlink and dependencies
+      - name: Install dependencies (no snap Chromium)
         run: |
           sudo apt-get update
-          sudo apt-get install -y streamlink xvfb chromium-browser
+          sudo apt-get remove -y chromium-browser || true
+          sudo apt-get install -y xvfb chromium-browser python3-pip
+          pip3 install --upgrade streamlink
 
-      - name: Configure headless browser for token auth
+      - name: Configure headless browser
         run: |
-          echo "STREAMLINK_WEBBROWSER_CMD=chromium-browser --headless --no-sandbox --disable-gpu" >> $GITHUB_ENV
+          echo "STREAMLINK_WEBBROWSER_CMD=/usr/bin/chromium-browser --headless --no-sandbox --disable-gpu" >> $GITHUB_ENV
 
       - name: Loop – record, commit, repeat
         run: |
@@ -52,6 +54,8 @@ jobs:
               "https://twitch.tv/${{ github.event.inputs.channel_name }}" \
               480p \
               --hls-duration $seg_sec \
+              --webbrowser-headless \
+              --webbrowser-no-sandbox \
               --output "segment_$(printf '%03d' $num).mp4"
 
             git add "segment_$(printf '%03d' $num).mp4"
