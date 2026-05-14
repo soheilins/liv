@@ -1,0 +1,69 @@
+name: 480p30
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel_name:
+        description: 'Twitch channel name'
+        required: true
+      segment_seconds:
+        description: 'Seconds per segment (e.g., 20)'
+        default: '420'
+      segments:
+        description: 'Number of segments (0 = unlimited until cancel)'
+        default: '0'
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create folder
+        id: folder
+        run: |
+          TS=$(date +'%m%d%H%M%S')
+          echo "name=$TS" >> $GITHUB_OUTPUT
+          mkdir -p "$TS"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install dependencies (remove snap Chromium, use apt + pip)
+        run: |
+          sudo apt-get update
+          sudo apt-get remove -y chromium-browser snapd || true
+          sudo apt-get install -y xvfb chromium-browser python3-pip
+          pip3 install --upgrade streamlink
+
+      - name: Configure browser environment for Streamlink
+        run: |
+          echo "STREAMLINK_WEBBROWSER_CMD=/usr/bin/chromium-browser" >> $GITHUB_ENV
+          echo "STREAMLINK_WEBBROWSER_HEADLESS=true" >> $GITHUB_ENV
+          echo "STREAMLINK_WEBBROWSER_NO_SANDBOX=true" >> $GITHUB_ENV
+
+      - name: Loop – record, commit, repeat
+        run: |
+          cd "${{ steps.folder.outputs.name }}"
+          seg_sec=${{ github.event.inputs.segment_seconds }}
+          num=1
+          while true; do
+            echo "=== Recording segment $num (${seg_sec}s) ==="
+            xvfb-run -a streamlink \
+              "https://twitch.tv/${{ github.event.inputs.channel_name }}" \
+              480p30 \
+              --hls-duration $seg_sec \
+              --output "segment_$(printf '%03d' $num).mp4"
+
+            git add "segment_$(printf '%03d' $num).mp4"
+            git commit -m "Segment $num from ${{ github.event.inputs.channel_name }}"
+            git push
+
+            num=$((num + 1))
+            if [ "${{ github.event.inputs.segments }}" -ne 0 ] && [ $num -gt ${{ github.event.inputs.segments }} ]; then
+              break
+            fi
+          done
