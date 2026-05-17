@@ -1,48 +1,59 @@
-name: Manually Move First File
+name: Copy First 5 Files (No Deletion)
 
 on:
-  workflow_dispatch:   # Manual trigger only
+  workflow_dispatch:    # Manual trigger only
 
 jobs:
-  move-file:
+  copy-files:
     runs-on: ubuntu-latest
     steps:
-      # 1. Checkout source repo (liv)
-      - name: Checkout source repository (soheilins/liv)
+      # Checkout source repository (liv)
+      - name: Checkout source repo (soheilins/liv)
         uses: actions/checkout@v4
         with:
           repository: soheilins/liv
           token: ${{ secrets.MY_GITHUB_TOKEN }}
-          fetch-depth: 1    # Shallow clone to save time
+          fetch-depth: 1
 
-      # 2. Identify the first file in the target folder
-      - name: Find first file in 0517034154
-        id: finder
+      # 1. Identify first 5 files in the target folder
+      - name: Find first 5 files
+        id: find
         run: |
           FOLDER="0517034154"
           if [ ! -d "$FOLDER" ]; then
-            echo "❌ Folder '$FOLDER' not found!"
+            echo "Folder $FOLDER not found!"
             exit 1
           fi
-          # Get the first file (alphabetical order)
-          FIRST_FILE=$(ls -1 "$FOLDER" | head -n 1)
-          if [ -z "$FIRST_FILE" ]; then
-            echo "❌ No files in '$FOLDER'"
-            exit 1
-          fi
-          echo "first_file=$FIRST_FILE" >> $GITHUB_OUTPUT
-          echo "📄 First file: $FIRST_FILE"
+          # List files, take first 5, store as JSON array
+          FILES=$(ls -1 "$FOLDER" | head -n 5 | jq -R -s -c 'split("\n")[:-1]')
+          echo "files=$FILES" >> $GITHUB_OUTPUT
+          echo "Found files: $FILES"
 
-      # 3. Copy that file to destination repo (saba) using a dedicated action
-      - name: Copy file to soheilins/saba
-        uses: dmnemec/copy_file_to_another_repo_action@v1.1.1
-        env:
-          API_TOKEN_GITHUB: ${{ secrets.MY_GITHUB_TOKEN }}
+      # 2. Checkout destination repository (saba) into a separate directory
+      - name: Checkout destination repo (soheilins/saba)
+        uses: actions/checkout@v4
         with:
-          source_file: '0517034154/${{ steps.finder.outputs.first_file }}'
-          destination_repo: 'soheilins/saba'
-          # Optional: put file into a subfolder (remove line if you want root)
-          destination_folder: 'moved-files'
-          user_email: 'your-email@example.com'     # Replace with your GitHub email
-          user_name: 'soheilins'                  # Your GitHub username
-          commit_message: 'Manual move: ${{ steps.finder.outputs.first_file }} from liv'
+          repository: soheilins/saba
+          token: ${{ secrets.MY_GITHUB_TOKEN }}
+          path: saba-dest
+          fetch-depth: 1
+
+      # 3. Copy the files into the destination repo
+      - name: Copy files to destination
+        run: |
+          # Create a folder inside destination (optional, change or remove as needed)
+          mkdir -p saba-dest/from-liv
+          for file in $(echo '${{ steps.find.outputs.files }}' | jq -r '.[]'); do
+            cp "0517034154/$file" saba-dest/from-liv/
+            echo "Copied $file"
+          done
+
+      # 4. Commit and push changes to destination repo
+      - name: Commit and push to saba
+        run: |
+          cd saba-dest
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add from-liv/
+          git commit -m "Copy first 5 files from liv/0517034154" || echo "No changes to commit"
+          git push
